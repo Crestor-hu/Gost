@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IIALI Probability Calculator - Fixed Logistic Regression Model</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e9edf2 100%);
+            margin: 0; padding: 20px; color: #1e2a3a;
+        }
+        .container {
+            max-width: 1300px; margin: 0 auto; background: white;
+            border-radius: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden; padding: 24px 32px 32px 32px;
+        }
+        h1 { font-size: 1.8rem; font-weight: 600; margin: 0 0 8px 0;
+             background: linear-gradient(120deg, #1e3c72, #2b4c7c);
+             -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .subtitle { color: #4a627a; border-left: 4px solid #2c7da0; padding-left: 16px;
+                    margin: 16px 0 24px 0; font-size: 0.95rem; }
+        .flex-row { display: flex; flex-wrap: wrap; gap: 24px; }
+        .input-panel { flex: 1.2; min-width: 280px; background: #f8fafc; border-radius: 24px;
+                      padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .result-panel { flex: 1; min-width: 280px; background: #ffffff; border-radius: 24px;
+                       padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .input-group { margin-bottom: 20px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; color: #0f2b3d; }
+        input, select { width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 16px;
+                       font-size: 0.9rem; background: white; }
+        button { background: #2c7da0; color: white; border: none; padding: 12px 20px;
+                border-radius: 40px; font-size: 1rem; font-weight: bold; width: 100%;
+                cursor: pointer; margin-top: 8px; }
+        button:hover { background: #1f5e7a; transform: translateY(-2px); }
+        .prob-card { background: #eef2ff; padding: 16px; border-radius: 24px; text-align: center; margin: 20px 0; }
+        .prob-value { font-size: 2.4rem; font-weight: 800; color: #1e4a6b; }
+        .risk-badge { display: inline-block; padding: 6px 14px; border-radius: 40px; font-size: 0.8rem; font-weight: bold; margin-top: 12px; }
+        .high-risk { background: #fee2e2; color: #b91c1c; }
+        .medium-risk { background: #fff3e0; color: #b45309; }
+        .low-risk { background: #e0f2e9; color: #166534; }
+        canvas { max-height: 300px; width: 100%; margin-top: 20px; }
+        .input-range { display:block; margin-top:6px; color:#526579; font-size:0.78rem; line-height:1.4; }
+        .input-invalid { border-color:#b91c1c !important; outline:1px solid #b91c1c; }
+        .range-note { font-size:0.76rem; color:#586a7c; line-height:1.5; margin:6px 0 14px; }
+        .footer-note { font-size: 0.82rem; line-height: 1.6; text-align: center; color: #5e7180; border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 24px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>IIALI Diagnostic Probability Calculator</h1>
+    <div class="subtitle">Mean-centered feature contributions (log-odds scale)</div>
+    <div class="flex-row">
+        <div class="input-panel">
+            <h3 style="margin-top:0;">📝 Input Clinical/Imaging Variables</h3>
+            <div id="inputs-container"></div>
+            <div class="range-note" id="range-note">Accepted input ranges are shown beneath each measurement.</div>
+            <div id="input-error" role="alert" aria-live="polite" style="color:#b91c1c; font-size:0.84rem; margin-top:8px;"></div>
+            <button id="predict-btn">Calculate probability and contributions</button>
+        </div>
+        <div class="result-panel">
+            <h3 style="margin-top:0;">Prediction and model explanation</h3>
+            <div id="prob-result" class="prob-card">
+                <div>Estimated Probability of Existing IIALI</div>
+                <div class="prob-value">--</div>
+                <div id="risk-badge" class="risk-badge"></div>
+            </div>
+            <div>Mean-centered logistic regression contributions (log-odds scale)</div>
+            <canvas id="contributionChart" width="400" height="300"></canvas>
+
+            <div id="contribution-details" style="font-size:0.75rem; margin-top:12px; color:#3b5c7a;"></div>
+        </div>
+    </div>
+    <div class="footer-note">
+        <p>The calculator uses a fixed six-predictor logistic regression model. The bars show each predictor’s contribution to the model output relative to the derivation cohort, expressed on the log-odds scale rather than as changes in predicted probability. These coefficient-based contributions are not directly computed SHAP values. Red bars indicate positive contributions, while blue bars indicate negative contributions.</p>
+        <p>The 30% threshold is exploratory, while 53.48% was determined using the Youden index. These probability categories are intended for reference only.</p>
+    </div>
+</div>
+<script>
+    const modelData = {"intercept":14.34601898,"cont_vars":["LCEA","LT","LW"],"cont_means":{"LCEA":28.847101449275364,"LT":3.88231884057971,"LW":4.907246376811594},"cont_coefs":{"LCEA":-0.8133413878,"LT":2.19665745,"LW":-0.3960874179},"cat_vars":["Degree_of_PA_intensity","PA_intensity","PA_type"],"cat_mappings":{"Degree_of_PA_intensity":{"levels":["Not severe","Severe"],"ref":"Not severe","dummies":{"Severe":"Degree_of_PA_intensity_Severe"}},"PA_intensity":{"levels":["Light","Moderate","Vigorous"],"ref":"Light","dummies":{"Moderate":"PA_intensity_Moderate","Vigorous":"PA_intensity_Vigorous"}},"PA_type":{"levels":["Other","Housework","Physical exercise"],"ref":"Other","dummies":{"Housework":"PA_type_Housework","Physical exercise":"PA_type_Physical exercise"}}},"dummy_means":{"Degree_of_PA_intensity_Severe":0.572463768115942,"PA_intensity_Moderate":0.14130434782608695,"PA_intensity_Vigorous":0.6014492753623188,"PA_type_Housework":0.286231884057971,"PA_type_Physical exercise":0.4782608695652174},"dummy_coefs":{"Degree_of_PA_intensity_Severe":1.94441156,"PA_intensity_Moderate":0.7394499814,"PA_intensity_Vigorous":2.42714719,"PA_type_Housework":0.6215198067,"PA_type_Physical exercise":2.259725705},"display_names":{"LCEA":"LCEA (°)","LT":"LT (mm)","LW":"LW (mm)","Degree_of_PA_intensity":"Degree of PA intensity","PA_intensity":"PA intensity","PA_type":"PA type"},"model_version":"IIALI-LR6-Rglm-v1.0","valid_input_ranges":{"LCEA":{"min":25,"max":33,"observed_min":26.86,"observed_max":32.08},"LT":{"min":2.5,"max":5.5,"observed_min":2.74,"observed_max":5.23},"LW":{"min":2.0,"max":8.5,"observed_min":2.3,"observed_max":7.1}}};
+    const exampleVals = {"LCEA":28.0,"LT":3.5,"LW":4.5,"PA_intensity":"Vigorous","PA_type":"Physical exercise","Degree_of_PA_intensity":"Severe"};
+
+    // Internal category codes are identical to their study-reported labels.
+
+    // Accepted input intervals are user-defined; observed derivation ranges are retained as separate metadata.
+    function formatLimit(value) {
+        return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)));
+    }
+    function rangeText(v) {
+        const range = modelData.valid_input_ranges[v] || {};
+        const u = v === 'LCEA' ? '°' : ' mm';
+        const lower = range.min != null ? '≥ ' + formatLimit(range.min) :
+                      range.min_exclusive != null ? '> ' + formatLimit(range.min_exclusive) : null;
+        const upper = range.max != null ? '≤ ' + formatLimit(range.max) :
+                      range.max_exclusive != null ? '< ' + formatLimit(range.max_exclusive) : null;
+        if (lower && upper && range.min != null) return `Valid input: ${formatLimit(range.min)}–${formatLimit(range.max)}${u}`;
+        if (lower && upper && range.min_exclusive != null) return `Valid input: > ${formatLimit(range.min_exclusive)} to ${formatLimit(range.max)}${u}`;
+        return `Input requirement: ${lower || 'No set minimum'}${u}` + (upper ? `, ${upper}${u}` : '');
+    }
+    function buildForm() {
+        const container = document.getElementById('inputs-container');
+        container.innerHTML = '';
+        for (const v of modelData.cont_vars) {
+            const disp = modelData.display_names[v] || v;
+            const exampleVal = (exampleVals[v] !== undefined) ? exampleVals[v] : '';
+            const group = document.createElement('div');
+            group.className = 'input-group';
+            const range = modelData.valid_input_ranges[v] || {};
+            const minVal = range.min != null ? range.min : (range.min_exclusive != null ? range.min_exclusive : null);
+            const minAttr = minVal != null ? ` min="${minVal}"` : '';
+            const maxAttr = range.max != null ? ` max="${range.max}"` : '';
+            group.innerHTML = `
+                <label for="${v}">${disp}</label>
+                <input type="number" step="any" id="${v}" value="${exampleVal}"${minAttr}${maxAttr} required aria-describedby="range-${v}">
+                <small class="input-range" id="range-${v}">${rangeText(v)}</small>
+            `;
+            container.appendChild(group);
+        }
+        for (const cat of modelData.cat_vars) {
+            const disp = modelData.display_names[cat] || cat;
+            const mapping = modelData.cat_mappings[cat];
+            const levels = mapping.levels;
+            const group = document.createElement('div');
+            group.className = 'input-group';
+            let options = '';
+            for (const lev of levels) {
+                let selected = (exampleVals[cat] && exampleVals[cat] === lev) ? 'selected' : '';
+                const displayLev = lev;
+                options += `<option value="${lev}" ${selected}>${displayLev}</option>`;
+            }
+            group.innerHTML = `<label for="${cat}">${disp}</label><select id="${cat}">${options}</select>`;
+            container.appendChild(group);
+        }
+        // When three observed bounds are configured, this note disappears automatically.
+        const complete = modelData.cont_vars.every(v => {
+            const range = modelData.valid_input_ranges[v] || {};
+            return range.observed_min != null && range.observed_max != null;
+        });
+        document.getElementById('range-note').hidden = false;
+    }
+
+    function computeContributions() {
+        let linear = modelData.intercept;
+        const contVals = {};
+        for (const v of modelData.cont_vars) {
+            const inputEl = document.getElementById(v);
+            let x = parseFloat(inputEl?.value);
+            if (isNaN(x)) x = modelData.cont_means[v];
+            contVals[v] = x;
+            const coef = modelData.cont_coefs[v] || 0;
+            linear += coef * x;
+        }
+        const catContribs = {};
+        for (const cat of modelData.cat_vars) {
+            const selectEl = document.getElementById(cat);
+            const selected = selectEl?.value;
+            const mapping = modelData.cat_mappings[cat];
+            let totalCatContrib = 0;
+            for (const [level, dummyName] of Object.entries(mapping.dummies)) {
+                let dummyVal = (level === selected) ? 1 : 0;
+                const coef = modelData.dummy_coefs[dummyName] || 0;
+                linear += coef * dummyVal;
+            }
+            for (const [level, dummyName] of Object.entries(mapping.dummies)) {
+                let dummyVal = (level === selected) ? 1 : 0;
+                const coef = modelData.dummy_coefs[dummyName] || 0;
+                const meanDummy = modelData.dummy_means[dummyName] || 0;
+                totalCatContrib += coef * (dummyVal - meanDummy);
+            }
+            catContribs[cat] = totalCatContrib;
+        }
+        const prob = 1 / (1 + Math.exp(-linear));
+        const features = [];
+        const contributions = [];
+        for (const v of modelData.cont_vars) {
+            const coef = modelData.cont_coefs[v] || 0;
+            const mean = modelData.cont_means[v] || 0;
+            const x = contVals[v];
+            const contrib = coef * (x - mean);
+            features.push(modelData.display_names[v] || v);
+            contributions.push(contrib);
+        }
+        for (const cat of modelData.cat_vars) {
+            features.push(modelData.display_names[cat] || cat);
+            contributions.push(catContribs[cat]);
+        }
+        return { linear, prob, features, contributions };
+    }
+
+    function validateInputs() {
+        const errorDiv = document.getElementById('input-error');
+        errorDiv.textContent = '';
+        for (const v of modelData.cont_vars) {
+            const el = document.getElementById(v);
+            el.classList.remove('input-invalid');
+            const text = el.value.trim();
+            const value = Number(text);
+            const r = modelData.valid_input_ranges[v] || {};
+            const label = modelData.display_names[v] || v;
+            const failed = !text || !Number.isFinite(value) ||
+                (r.min != null && value < r.min) ||
+                (r.min_exclusive != null && value <= r.min_exclusive) ||
+                (r.max != null && value > r.max) ||
+                (r.max_exclusive != null && value >= r.max_exclusive);
+            if (failed) {
+                el.classList.add('input-invalid');
+                errorDiv.textContent = `Please enter ${label} within its stated input range. ${rangeText(v)}`;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    let chartInstance = null;
+    function updateUI() {
+        if (!validateInputs()) {
+            document.querySelector('.prob-value').textContent = '--';
+            document.getElementById('risk-badge').textContent = '';
+            document.getElementById('contribution-details').textContent = '';
+            if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+            return;
+        }
+        const { linear, prob, features, contributions } = computeContributions();
+        const probPercent = (prob * 100).toFixed(1);
+        document.querySelector('.prob-value').innerHTML = `${probPercent}%`;
+        const riskDiv = document.getElementById('risk-badge');
+        if (prob < 0.30) {
+            riskDiv.innerHTML = 'Low estimated probability (<30%)';
+            riskDiv.className = 'risk-badge low-risk';
+        } else if (prob < 0.5348) {
+            riskDiv.innerHTML = 'Moderate estimated probability (30%–<53.48%)';
+            riskDiv.className = 'risk-badge medium-risk';
+        } else {
+            riskDiv.innerHTML = 'High estimated probability (≥53.48%)';
+            riskDiv.className = 'risk-badge high-risk';
+        }
+        const ctx = document.getElementById('contributionChart').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        const combined = features.map((f, idx) => ({ name: f, value: contributions[idx] }));
+        combined.sort((a,b) => Math.abs(b.value) - Math.abs(a.value));
+        const sortedFeatures = combined.map(c => c.name);
+        const sortedVals = combined.map(c => c.value);
+        const colors = sortedVals.map(v => v >= 0 ? '#d9534f' : '#5bc0de');
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: sortedFeatures,
+                datasets: [{
+                    label: 'Mean-centered contribution (log-odds)',
+                    data: sortedVals,
+                    backgroundColor: colors,
+                    borderRadius: 8,
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `Contribution: ${ctx.raw.toFixed(4)}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Log-odds contribution (positive → higher estimate)' } }
+                }
+            }
+        });
+        const referenceLogit = modelData.intercept +
+            modelData.cont_vars.reduce((a,v)=>a+modelData.cont_coefs[v]*modelData.cont_means[v],0) +
+            Object.entries(modelData.dummy_coefs).reduce((a,[k,b])=>a+b*modelData.dummy_means[k],0);
+        const sumContributions = contributions.reduce((a,v)=>a+v,0);
+        document.getElementById('contribution-details').innerHTML =
+            `Reference logit: ${referenceLogit.toFixed(4)} + sum of contributions: ${sumContributions.toFixed(4)} = patient logit: ${linear.toFixed(4)}`;
+    }
+
+    window.onload = () => {
+        buildForm();
+        document.getElementById('predict-btn').addEventListener('click', updateUI);
+        for (const v of modelData.cont_vars) document.getElementById(v).addEventListener('change', updateUI);
+        updateUI();
+    };
+</script>
+</body>
+</html>
